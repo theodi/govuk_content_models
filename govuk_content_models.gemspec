@@ -21,13 +21,13 @@ Gem::Specification.new do |gem|
 
   gem.add_dependency "gds-sso",          ">= 3.0.0", "< 4.0.0"
   gem.add_dependency "govspeak",         ">= 1.0.1", "< 2.0.0"
-  gem.add_dependency "mongoid",          "~> 2.4.10"
+  # Mongoid 2.5.0 supports the newer 1.7.x and 1.8.x Mongo drivers
+  gem.add_dependency "mongoid",          "~> 2.5"
   gem.add_dependency "plek"
   gem.add_dependency "state_machine"
 
   gem.add_development_dependency "database_cleaner", "0.7.2"
   gem.add_development_dependency "factory_girl", "3.3.0"
-  gem.add_development_dependency "gemfury", "0.4.12"
   gem.add_development_dependency "gem_publisher", "1.2.0"
   gem.add_development_dependency "mocha", "0.13.3"
   gem.add_development_dependency "multi_json", "1.3.7" # Pinned to allow dependency resolution
@@ -38,4 +38,5 @@ Gem::Specification.new do |gem|
 
   # The following are added to help bundler resolve dependencies
   gem.add_development_dependency "rack", "~> 1.4.4"
+  gem.add_development_dependency "rails", "= 3.2.13"
 end

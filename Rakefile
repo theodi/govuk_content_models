@@ -13,7 +13,7 @@ end
 require "gem_publisher"
 desc "Publish gem to Gemfury"
 task :publish_gem do |t|
-  gem = GemPublisher.publish_if_updated("govuk_content_models.gemspec", :gemfury, :as => "govuk")
+  gem = GemPublisher.publish_if_updated("govuk_content_models.gemspec", :rubygems)
   puts "Published #{gem}" if gem
 end
 
@@ -21,7 +21,7 @@ task :check_for_bad_time_handling do
   directories = Dir.glob(File.join(File.dirname(__FILE__), '**', '*.rb'))
   matching_files = directories.select do |filename|
     match = false
-    File.open(filename) do |file|
+    File.open(filename, :encoding => 'utf-8') do |file|
       match = file.grep(%r{Time\.(now|utc|parse)}).any?
     end
     match

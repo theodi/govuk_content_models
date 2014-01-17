@@ -18,7 +18,7 @@ class Artefact
 
   include Taggable
   stores_tags_for :sections, :writing_teams, :propositions,
-                  :keywords, :legacy_sources
+                  :keywords, :legacy_sources, :industry_sectors
   has_primary_tag_for :section
 
   # NOTE: these fields are deprecated, and soon to be replaced with a
@@ -45,10 +45,18 @@ class Artefact
 
   index "slug", :unique => true
 
+  # This index allows the `relatable_artefacts` method to use an index-covered
+  # query, so it doesn't have to load each of the artefacts.
+  index [[:name, Mongo::ASCENDING],
+         [:state, Mongo::ASCENDING],
+         [:kind, Mongo::ASCENDING],
+         [:_type, Mongo::ASCENDING],
+         [:_id, Mongo::ASCENDING]]
+
   scope :not_archived, where(:state.nin => ["archived"])
 
   GOVSPEAK_FIELDS = []
-  
+
   validates_with SafeHtml
 
   MAXIMUM_RELATED_ITEMS = 8
@@ -56,8 +64,10 @@ class Artefact
   FORMATS_BY_DEFAULT_OWNING_APP = {
     "publisher"               => ["answer",
                                   "business_support",
+                                  "campaign",
                                   "completed_transaction",
                                   "guide",
+                                  "help_page",
                                   "licence",
                                   "local_transaction",
                                   "place",
@@ -107,11 +117,12 @@ class Artefact
 
   validates :name, presence: true
   validates :slug, presence: true, uniqueness: true, slug: true
-  validates :kind, inclusion: { in: FORMATS }
+  validates :kind, inclusion: { in: lambda { |x| FORMATS } }
   validates :state, inclusion: { in: ["draft", "live", "archived"] }
   validates :owning_app, presence: true
   validates :language, inclusion: { in: ["en", "cy"] }
   validates_with CannotEditSlugIfEverPublished
+  validate :validate_prefixes_and_paths
 
   def self.in_alphabetical_order
     order_by([[:name, :asc]])
@@ -122,7 +133,12 @@ class Artefact
   end
 
   def self.relatable_items
-    self.in_alphabetical_order.where(:kind.nin => ["completed_transaction"], :state.nin => ["archived"])
+    # Only retrieving the name field, because that's all we use in Panopticon's
+    # helper method (the only place we use this), and it means the index can
+    # cover the query entirely
+    self.in_alphabetical_order
+        .where(:kind.ne => "completed_transaction", :state.ne => "archived")
+        .only(:name)
   end
 
   # The old-style section string identifier, of the form 'Crime:Prisons'
@@ -298,5 +314,28 @@ class Artefact
   def snapshot
     reconcile_tag_ids
     attributes.except "_id", "created_at", "updated_at", "actions"
+  end
+
+  private
+
+  def validate_prefixes_and_paths
+    if ! self.prefixes.nil? and self.prefixes_changed?
+      if self.prefixes.any? {|p| ! valid_url_path?(p)}
+        errors.add(:prefixes, "are not all valid absolute URL paths")
+      end
+    end
+    if ! self.paths.nil? and self.paths_changed?
+      if self.paths.any? {|p| ! valid_url_path?(p)}
+        errors.add(:paths, "are not all valid absolute URL paths")
+      end
+    end
+  end
+
+  def valid_url_path?(path)
+    return false unless path.starts_with?("/")
+    uri = URI.parse(path)
+    uri.path == path && path !~ %r{//} && path !~ %r{./\z}
+  rescue URI::InvalidURIError
+    false
   end
 end

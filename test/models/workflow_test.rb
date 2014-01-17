@@ -280,11 +280,46 @@ class WorkflowTest < ActiveSupport::TestCase
     end
   end
 
+  test "handles inconsistent newlines" do
+    # Differ tries to be smart when calculating changes, by searching for a matching line
+    # later in the texts. When we have predominantly Windows-style new lines (\r\n) with
+    # a few Unix-style new lines (\n), a Unix-style new line later in one document will be
+    # matched to a Unix-style new line in the other, causing large swathes of spurious diff.
+
+    edition_one = AnswerEdition.new(title: "Chucking wood", slug: "woodchuck", panopticon_id: @artefact.id)
+    edition_one.body = "badger\n\nmushroom\r\n\r\nsnake\n\nend"
+
+    edition_two = AnswerEdition.new(title: "Chucking wood", slug: "woodchuck", panopticon_id: @artefact.id)
+    edition_two.body = "badger\r\n\r\nmushroom\r\n\r\nsnake\n\nend"
+    edition_two.stubs(:published_edition).returns(edition_one)
+
+    # Test that the diff output is simply the (normalised) string, with no diff markers
+    assert_equal "badger\n\nmushroom\n\nsnake\n\nend", edition_two.edition_changes.to_s
+  end
+
   test "an edition can be moved into archive state" do
     user, other_user = template_users
 
     edition = user.create_edition(:programme, panopticon_id: @artefact.id, title: "My title", slug: "my-slug")
     user.take_action!(edition, "archive")
     assert_equal "archived", edition.state
+  end
+
+  # Mongoid 2.x marks array fields as dirty whenever they are accessed.
+  # See https://github.com/mongoid/mongoid/issues/2311
+  # This behaviour has been patched in lib/mongoid/monkey_patches.rb
+  # in order to prevent workflow validation failures for editions
+  # with array fields.
+  #
+  test "not_editing_published_item should not consider unchanged array fields as changes" do
+    bs = FactoryGirl.create(:business_support_edition, state: 'published', sectors: [])
+    assert_empty bs.errors
+    bs.sectors # Access the Array field
+    bs.valid?
+    assert_empty bs.errors
+    bs.sectors << 'education'
+    assert_equal ['sectors'], bs.changes.keys
+    bs.valid?
+    assert_equal "Published editions can't be edited", bs.errors[:base].first
   end
 end

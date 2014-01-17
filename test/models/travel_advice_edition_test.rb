@@ -136,6 +136,15 @@ class TravelAdviceEditionTest < ActiveSupport::TestCase
         @ta.alert_status = [ ]
         assert @ta.valid?
       end
+
+      # Test that accessing an Array field doesn't mark it as dirty.
+      # mongoid/dirty#changes method is patched in lib/mongoid/monkey_patches.rb
+      # See https://github.com/mongoid/mongoid/issues/2311 for details.
+      should "track changes to alert status accurately" do
+        @ta.alert_status = [ ]
+        @ta.alert_status
+        assert @ta.valid?
+      end
     end
 
     context "on version_number" do
@@ -369,6 +378,9 @@ class TravelAdviceEditionTest < ActiveSupport::TestCase
     setup do
       @published = FactoryGirl.create(:published_travel_advice_edition, :country_slug => 'aruba',
                                       :published_at => 3.days.ago, :change_description => 'Stuff changed')
+      @published.reviewed_at = 2.days.ago
+      @published.save!
+
       Timecop.freeze(1.days.ago) do
         # this is done to make sure there's a significant difference in time
         # between creating the edition and it being published
@@ -382,10 +394,10 @@ class TravelAdviceEditionTest < ActiveSupport::TestCase
       assert_equal @ed.published_at, @ed.reviewed_at
     end
 
-    should "be updated when a minor update is published" do
+    should "be set to the previous version's reviewed_at when a minor update is published" do
       @ed.minor_update = true
       @ed.publish!
-      assert_equal @ed.published_at, @ed.reviewed_at
+      assert_equal @published.reviewed_at, @ed.reviewed_at
     end
 
     should "be able to be updated without affecting other dates" do

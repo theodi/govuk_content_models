@@ -58,11 +58,12 @@ class TravelAdviceEdition
       if edition.minor_update
         previous = edition.previous_version
         edition.published_at = previous.published_at
+        edition.reviewed_at = previous.reviewed_at
         edition.change_description = previous.change_description
       else
         edition.published_at = Time.zone.now.utc
+        edition.reviewed_at = edition.published_at
       end
-      edition.reviewed_at = edition.published_at
       edition.class.where(country_slug: edition.country_slug, state: 'published').each do |ed|
         ed.archive
       end
@@ -150,16 +151,7 @@ class TravelAdviceEdition
   end
 
   def anything_other_than_state_changed?(*additional_allowed_fields)
-    self.changed? and ((real_fields_changed - ['state'] - additional_allowed_fields) != [] or self.parts.any?(&:changed?))
-  end
-
-  def real_fields_changed
-    # There's an issue with dirty-tracking of Array fields.  Merely accessing them will mark
-    # them as changed, but with no changes. This recifies that.
-    # this also allows changes when the change is something changing from nil to an empty array
-    self.changes.reject { |k, v|
-      v.nil? || v == [nil, []]
-    }.keys
+    self.changed? and ((changes.keys - ['state'] - additional_allowed_fields) != [] or self.parts.any?(&:changed?))
   end
 
   def alert_status_contains_valid_values

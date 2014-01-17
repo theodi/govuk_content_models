@@ -49,6 +49,15 @@ FactoryGirl.define do
   factory :answer_edition, parent: :edition do
   end
 
+  factory :help_page_edition, :parent => :edition, :class => 'HelpPageEdition' do
+  end
+
+  factory :campaign_edition, :parent => :edition, :class => 'CampaignEdition' do
+  end
+
+  factory :completed_transaction_edition, :parent => :edition, :class => 'CompletedTransactionEdition' do
+  end
+
   factory :video_edition, parent: :edition, :class => 'VideoEdition' do
   end
 
@@ -74,6 +83,17 @@ FactoryGirl.define do
     edition.sequence(:title) { |n| "Test programme #{n}" }
     edition.sequence(:slug) { |ns| "slug-#{ns}"}
     section { "test:subsection test" }
+  end
+
+  factory :programme_edition_with_multiple_parts, parent: :programme_edition do
+    title "a title"
+    after :create do |getp|
+      getp.parts.build(title: "PART !", body: "This is some programme version text.",
+                       slug: "part-one")
+      getp.parts.build(title: "PART !!",
+                       body: "This is some more programme version text.",
+                       slug: "part-two")
+    end
   end
 
   factory :guide_edition_with_two_parts, parent: :guide_edition do

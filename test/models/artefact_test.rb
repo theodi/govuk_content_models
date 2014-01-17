@@ -71,6 +71,87 @@ class ArtefactTest < ActiveSupport::TestCase
       a = FactoryGirl.build(:artefact, slug: "slug", kind: "detailed_guide")
       assert a.valid?
     end
+
+    context "help page special case" do
+      should "allow a help page to have a help/ prefix on the slug" do
+        a = FactoryGirl.build(:artefact, :slug => "help/foo", :kind => "help_page")
+        assert a.valid?
+      end
+
+      should "require a help page to have a help/ prefix on the slug" do
+        a = FactoryGirl.build(:artefact, :slug => "foo", :kind => "help_page")
+        refute a.valid?
+        assert_equal 1, a.errors[:slug].count
+      end
+
+      should "not allow other kinds to have a help/ prefix" do
+        a = FactoryGirl.build(:artefact, :slug => "help/foo", :kind => "answer")
+        refute a.valid?
+        assert_equal 1, a.errors[:slug].count
+      end
+    end
+  end
+
+  context "validating paths and prefixes" do
+    setup do
+      @a = FactoryGirl.build(:artefact)
+    end
+
+    should "be valid when empty" do
+      @a.paths = []
+      @a.prefixes = []
+      assert @a.valid?
+
+      @a.paths = nil
+      @a.prefixes = nil
+      assert @a.valid?
+    end
+
+    should "be valid when set to array of absolute URL paths" do
+      @a.paths = ["/foo.json"]
+      @a.prefixes = ["/foo", "/bar"]
+      assert @a.valid?
+    end
+
+    should "be invalid if an entry is not a valid absolute URL path" do
+      [
+        "not a URL path",
+        "http://foo.example.com/bar",
+        "bar/baz",
+        "/foo/bar?baz=qux",
+      ].each do |path|
+        @a.paths = ["/foo.json", path]
+        @a.prefixes = ["/foo", path]
+        refute @a.valid?
+        assert_equal 1, @a.errors[:paths].count
+        assert_equal 1, @a.errors[:prefixes].count
+      end
+    end
+
+    should "be invalid with consecutive or trailing slashes" do
+      [
+        "/foo//bar",
+        "/foo/bar///",
+        "//bar/baz",
+        "//",
+        "/foo/bar/",
+      ].each do |path|
+        @a.paths = ["/foo.json", path]
+        @a.prefixes = ["/foo", path]
+        refute @a.valid?
+        assert_equal 1, @a.errors[:paths].count
+        assert_equal 1, @a.errors[:prefixes].count
+      end
+    end
+
+    should "skip validating these if they haven't changed" do
+      # This validation can be expensive, so skip it where unnecessary.
+      @a.paths = ["foo"]
+      @a.prefixes = ["bar"]
+      @a.save :validate => false
+
+      assert @a.valid?
+    end
   end
 
   test "should translate kind into internally normalised form" do
@@ -288,6 +369,13 @@ class ArtefactTest < ActiveSupport::TestCase
     assert_raise RuntimeError do
       edition.update_attributes({state: "archived", title: "Shabba", slug: "do-not-allow"})
     end
+  end
+
+  should "not remove double dashes in a Detailed Guide slug" do
+    a = FactoryGirl.create(:artefact, slug: "duplicate-slug--1", kind: "detailed_guide")
+    a.reload
+
+    assert_equal "duplicate-slug--1", a.slug
   end
 
   context "artefact language" do
