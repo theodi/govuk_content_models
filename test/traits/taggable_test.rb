@@ -5,7 +5,7 @@ class TaggableTest < ActiveSupport::TestCase
 
   TEST_SECTIONS = [['crime', 'Crime'], ['crime/the-police', 'The Police'],
     ['crime/batman', 'Batman']]
-  TEST_KEYWORDS = [['cheese', 'Cheese'], ['bacon', 'Bacon']]
+  TEST_KEYWORDS = [['cheese', 'Cheese'], ['bacon', 'Bacon'], ['crime', 'Crime']]
 
   setup do
     TEST_SECTIONS.each do |tag_id, title|
@@ -110,5 +110,21 @@ class TaggableTest < ActiveSupport::TestCase
     @item.reload
 
     assert_equal ['bacon'], @item.keyword_ids
+  end
+
+  test "can set keywords with the same name as sections" do
+    @item.sections = ['crime']
+    @item.keywords = ['crime']
+
+    # This works
+    assert_equal @item.section_ids, ['crime']
+    assert_equal @item.keyword_ids, ['crime', 'cheese']
+
+    @item.save!
+    @item.reload
+
+    # This doesn't / (╯°□°）╯︵ ┻━┻
+    assert_equal @item.section_ids, ['crime']
+    assert_equal @item.keyword_ids, ['crime']
   end
 end
