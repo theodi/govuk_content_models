@@ -244,14 +244,14 @@ class ArtefactTest < ActiveSupport::TestCase
     user1 = FactoryGirl.create(:user)
     edition = AnswerEdition.find_or_create_from_panopticon_data(artefact.id, user1, {})
 
-    assert_equal artefact.name, edition.title
+    assert_equal artefact.department, edition.department
     assert_equal artefact.section, edition.section
 
-    artefact.name = "Babar"
+    artefact.department = "Babar"
     artefact.save
 
     edition.reload
-    assert_equal artefact.name, edition.title
+    assert_equal artefact.department, edition.department
   end
 
   test "should not let you edit the slug if the artefact is live" do
@@ -271,6 +271,9 @@ class ArtefactTest < ActiveSupport::TestCase
 
   # should continue to work in the way it has been:
   # i.e. you can edit everything but the name/title for published content in panop
+  # Removing link between Panopticon name and Publisher title.
+  # https://github.com/theodi/publisher/issues/135
+  # Now test for department, rather than name.
   test "on save title should not be applied to already published content" do
     FactoryGirl.create(:tag, tag_id: "test-section", title: "Test section", tag_type: "section")
     artefact = FactoryGirl.create(:artefact,
