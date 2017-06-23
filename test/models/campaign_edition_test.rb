@@ -6,18 +6,19 @@ class CampaignEditionTest < ActiveSupport::TestCase
   end
 
   should "have correct extra fields" do
-    c = FactoryGirl.build(:campaign_edition, :panopticon_id => @artefact.id)
-    c.body = "Start all the campaigns!"
-    c.large_image_id = "large-image-id-from-the-asset-manager"
-    c.medium_image_id = "medium-image-id-from-the-asset-manager"
-    c.small_image_id = "small-image-id-from-the-asset-manager"
-    c.organisation_formatted_name = "Driver & Vehicle\nLicensing\nAgency"
-    c.organisation_url = "/government/organisations/driver-and-vehicle-licensing-agency"
-    c.organisation_brand_colour = "department-for-transport"
-    c.organisation_crest = "single-identity"
-    c.safely.save!
+    c = FactoryGirl.create(
+      :campaign_edition,
+      panopticon_id: @artefact.id,
+      body: "Start all the campaigns!",
+      large_image_id: "large-image-id-from-the-asset-manager",
+      medium_image_id: "medium-image-id-from-the-asset-manager",
+      small_image_id: "small-image-id-from-the-asset-manager",
+      organisation_formatted_name: "Driver & Vehicle\nLicensing\nAgency",
+      organisation_url: "/government/organisations/driver-and-vehicle-licensing-agency",
+      organisation_brand_colour: "department-for-transport",
+      organisation_crest: "single-identity",
+    )
 
-    c = CampaignEdition.first
     assert_equal "Start all the campaigns!", c.body
     assert_equal "large-image-id-from-the-asset-manager", c.large_image_id
     assert_equal "medium-image-id-from-the-asset-manager", c.medium_image_id
@@ -38,30 +39,6 @@ class CampaignEditionTest < ActiveSupport::TestCase
                           :panopticon_id => @artefact.id,
                           :body => "Something")
     assert_equal campaign.body, campaign.whole_body
-  end
-
-  should "clone extra fields when cloning edition" do
-    campaign = FactoryGirl.create(:campaign_edition,
-                               :panopticon_id => @artefact.id,
-                               :state => "published",
-                               :body => "I'm very campaignful",
-                               :large_image_id => "large-image",
-                               :medium_image_id => "medium-image",
-                               :small_image_id => "small-image",
-                               :organisation_formatted_name => "Driver & Vehicle\nLicensing\nAgency",
-                               :organisation_url => "/government/organisations/driver-and-vehicle-licensing-agency",
-                               :organisation_brand_colour => "department-for-transport",
-                               :organisation_crest => "single-identity" )
-
-    new_campaign = campaign.build_clone
-    assert_equal campaign.body, new_campaign.body
-    assert_equal campaign.large_image_id, new_campaign.large_image_id
-    assert_equal campaign.medium_image_id, new_campaign.medium_image_id
-    assert_equal campaign.small_image_id, new_campaign.small_image_id
-    assert_equal campaign.organisation_formatted_name, new_campaign.organisation_formatted_name
-    assert_equal campaign.organisation_url, new_campaign.organisation_url
-    assert_equal campaign.organisation_brand_colour, new_campaign.organisation_brand_colour
-    assert_equal campaign.organisation_crest, new_campaign.organisation_crest
   end
 
   should "be not valid with an organisation brand colour from outside the list" do

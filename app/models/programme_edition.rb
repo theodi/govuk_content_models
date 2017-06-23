@@ -6,7 +6,7 @@ class ProgrammeEdition < Edition
 
   before_save :setup_default_parts, on: :create
 
-  @fields_to_clone = []
+  GOVSPEAK_FIELDS = []
 
   DEFAULT_PARTS = [
     {title: "Overview", slug: "overview"},

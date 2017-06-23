@@ -1,8 +1,6 @@
-require "slug_validator"
 require "plek"
-require "traits/taggable"
 require "artefact_action"  # Require this when running outside Rails
-require "safe_html"
+require_dependency "safe_html"
 
 class CannotEditSlugIfEverPublished < ActiveModel::Validator
   def validate(record)
@@ -16,16 +14,6 @@ class Artefact
   include Mongoid::Document
   include Mongoid::Timestamps
 
-  include Taggable
-  stores_tags_for :sections, :writing_teams, :propositions,
-                  :keywords, :legacy_sources, :industry_sectors
-  has_primary_tag_for :section
-
-  # NOTE: these fields are deprecated, and soon to be replaced with a
-  # tag-based implementation
-  field "department",           type: String
-  field "business_proposition", type: Boolean, default: false
-
   field "name",                 type: String
   field "slug",                 type: String
   field "paths",                type: Array, default: []
@@ -34,32 +22,37 @@ class Artefact
   field "owning_app",           type: String
   field "rendering_app",        type: String
   field "active",               type: Boolean, default: false
+
+  # will be removed once multiple need_ids
+  # gets deployed and tested.
   field "need_id",              type: String
-  field "fact_checkers",        type: String
+
+  field "need_ids",             type: Array, default: []
   field "publication_id",       type: String
   field "description",          type: String
   field "state",                type: String,  default: "draft"
-  field "specialist_body",      type: String
   field "language",             type: String,  default: "en"
-  field "need_extended_font",   type: Boolean, default: false
+  field "latest_change_note",   type: String
+  field "public_timestamp",     type: DateTime
+  field "redirect_url",         type: String
 
-  index "slug", :unique => true
+  # content_id should be unique but we have existing artefacts without it.
+  # We should therefore enforce the uniqueness as soon as:
+  #  - every current artefact will have a content id assigned
+  #  - every future artefact will be created with a content id
+  field "content_id",           type: String
+
+  index({ slug: 1 }, unique: true)
 
   # This index allows the `relatable_artefacts` method to use an index-covered
   # query, so it doesn't have to load each of the artefacts.
-  index [[:name, Mongo::ASCENDING],
-         [:state, Mongo::ASCENDING],
-         [:kind, Mongo::ASCENDING],
-         [:_type, Mongo::ASCENDING],
-         [:_id, Mongo::ASCENDING]]
+  index name: 1,
+        state: 1,
+        kind: 1,
+        _type: 1,
+        _id: 1
 
-  scope :not_archived, where(:state.nin => ["archived"])
-
-  GOVSPEAK_FIELDS = []
-
-  validates_with SafeHtml
-
-  MAXIMUM_RELATED_ITEMS = 8
+  scope :not_archived, lambda { where(:state.nin => ["archived"]) }
 
   FORMATS_BY_DEFAULT_OWNING_APP = {
     "publisher"               => ["answer",
@@ -78,16 +71,12 @@ class Artefact
     "smartanswers"            => ["smart-answer"],
     "custom-application"      => ["custom-application"], # In this case the owning_app is overriden. eg calendars, licencefinder
     "travel-advice-publisher" => ["travel-advice"],
-    "whitehall"               => ["case_study",
-                                  "consultation",
-                                  "detailed_guide",
-                                  "news_article",
-                                  "speech",
-                                  "policy",
-                                  "publication",
-                                  "statistical_data_set",
-                                  "worldwide_priority"]
+    "specialist-publisher"    => ["manual"],
+    "finder-api"              => ["finder",
+                                  "finder_email_signup"],
   }.freeze
+
+  RETIRED_FORMATS = %w[ business_support campaign programme video]
 
   FORMATS = FORMATS_BY_DEFAULT_OWNING_APP.values.flatten
 
@@ -103,14 +92,14 @@ class Artefact
     "find my nearest"                  => "place",
   }.tap { |h| h.default_proc = -> _, k { k } }.freeze
 
-  has_and_belongs_to_many :related_artefacts, class_name: "Artefact"
-  embeds_many :actions, class_name: "ArtefactAction", order: :created_at
+  embeds_many :actions, class_name: "ArtefactAction", order: { created_at: :asc }
 
   embeds_many :external_links, class_name: "ArtefactExternalLink"
   accepts_nested_attributes_for :external_links, :allow_destroy => true,
     reject_if: proc { |attrs| attrs["title"].blank? && attrs["url"].blank?  }
 
   before_validation :normalise, on: :create
+  before_validation :filter_out_empty_need_ids, if: :need_ids_changed?
   before_create :record_create_action
   before_update :record_update_action
   after_update :update_editions
@@ -123,32 +112,14 @@ class Artefact
   validates :language, inclusion: { in: ["en", "cy"] }
   validates_with CannotEditSlugIfEverPublished
   validate :validate_prefixes_and_paths
+  validate :format_of_new_need_ids, if: :need_ids_changed?
 
   def self.in_alphabetical_order
-    order_by([[:name, :asc]])
+    order_by(name: :asc)
   end
 
   def self.find_by_slug(s)
     where(slug: s).first
-  end
-
-  def self.relatable_items
-    # Only retrieving the name field, because that's all we use in Panopticon's
-    # helper method (the only place we use this), and it means the index can
-    # cover the query entirely
-    self.in_alphabetical_order
-        .where(:kind.ne => "completed_transaction", :state.ne => "archived")
-        .only(:name)
-  end
-
-  # The old-style section string identifier, of the form 'Crime:Prisons'
-  def section
-    return '' unless self.primary_section
-    if primary_section.parent
-      [primary_section.parent.title, primary_section.title].join ':'
-    else
-      primary_section.title
-    end
   end
 
   # Fallback to english if no language is present
@@ -167,67 +138,10 @@ class Artefact
     ].reject(&:blank?).join("?")
   end
 
-  # TODO: Replace this nonsense with a proper API layer.
   def as_json(options={})
     super.tap { |hash|
-      if hash["tag_ids"]
-        hash["tags"] = Tag.by_tag_ids!(hash["tag_ids"]).map(&:as_json)
-      else
-        hash["tag_ids"] = []
-        hash["tags"] = []
-      end
-
-      if self.primary_section
-        hash['primary_section'] = self.primary_section.tag_id
-      end
-
-      unless options[:ignore_related_artefacts]
-        hash["related_items"] = published_related_artefacts.map do |a|
-          {"artefact" => a.as_json(ignore_related_artefacts: true)}
-        end
-      end
-      hash.delete("related_artefacts")
-      hash.delete("related_artefact_ids")
       hash["id"] = hash.delete("_id")
-
-      # Add a section identifier if needed
-      hash["section"] ||= section
     }
-  end
-
-  def published_related_artefacts
-    related_artefacts.select do |related_artefact|
-      if related_artefact.owning_app == "publisher"
-        related_artefact.any_editions_published?
-      else
-        true
-      end
-    end
-  end
-
-  # Pass in the desired scope, eg self.related_artefacts.live,
-  # get back the items in the order they were set in, rather than natural order
-  def ordered_related_artefacts(scope_or_array = self.related_artefacts)
-    scope_or_array.sort_by { |artefact| related_artefact_ids.index(artefact.id) }
-  end
-
-  def related_artefacts_grouped_by_distance(scope_or_array = self.related_artefacts)
-    groups = { "subsection" => [], "section" => [], "other" => [] }
-    scoped_artefacts = ordered_related_artefacts(scope_or_array)
-
-    if primary_tag = self.primary_section
-      groups['subsection'] = scoped_artefacts.select {|a| a.tag_ids.include?(primary_tag.tag_id) }
-
-      if primary_tag.parent_id.present?
-        pattern = Regexp.new "^#{Regexp.quote(primary_tag.parent_id)}\/.+"
-        groups['section'] = scoped_artefacts.reject {|a| groups['subsection'].include?(a) }.select {|a|
-          a.tag_ids.grep(pattern).count > 0
-        }
-      end
-    end
-    groups['other'] = scoped_artefacts.reject {|a| (groups['subsection'] + groups['section']).include?(a) }
-
-    groups
   end
 
   def any_editions_published?
@@ -240,12 +154,15 @@ class Artefact
   end
 
   def update_editions
-    if state != 'archived'
-      Edition.where(:state.nin => ["archived"],
-                    panopticon_id: self.id).each do |edition|
-        edition.update_from_artefact(self)
+    case state
+    when 'draft'
+      if self.slug_changed?
+        Edition.where(:state.nin => ["archived"],
+                      panopticon_id: self.id).each do |edition|
+          edition.update_slug_from_artefact(self)
+        end
       end
-    else
+    when 'archived'
       archive_editions
     end
   end
@@ -254,15 +171,13 @@ class Artefact
     if state == 'archived'
       Edition.where(panopticon_id: self.id, :state.nin => ["archived"]).each do |edition|
         edition.new_action(self, "note", comment: "Artefact has been archived. Archiving this edition.")
-        edition.archive!
+        edition.perform_event_without_validations(:archive!)
       end
     end
   end
 
   def self.from_param(slug_or_id)
     find_by_slug(slug_or_id) || find(slug_or_id)
-  rescue BSON::InvalidObjectId
-    raise Mongoid::Errors::DocumentNotFound.new(self, slug_or_id)
   end
 
   def update_attributes_as(user, *args)
@@ -273,8 +188,19 @@ class Artefact
   def save_as(user, options={})
     default_action = new_record? ? "create" : "update"
     action_type = options.delete(:action_type) || default_action
-    record_action action_type, user: user
+    record_action(action_type, user: user)
     save(options)
+  end
+
+  # We should use this method when performing save actions from rake tasks,
+  # message queue consumer or any other performed tasks that have no user associated
+  # as we are still interested to know what triggered the action.
+  def save_as_task!(task_name, options = {})
+    default_action = new_record? ? "create" : "update"
+    action_type = options.delete(:action_type) || default_action
+
+    record_action(action_type, task_name: task_name)
+    save!(options)
   end
 
   def record_create_action
@@ -287,14 +213,21 @@ class Artefact
 
   def record_action(action_type, options={})
     user = options[:user]
+    task_name = options[:task_name]
     current_snapshot = snapshot
-    last_snapshot = actions.last ? actions.last.snapshot : nil
+    last_snapshot = actions.last.snapshot if actions.last
+
     unless current_snapshot == last_snapshot
-      new_action = actions.build(
-        user: user,
+
+      attributes = {
         action_type: action_type,
-        snapshot: current_snapshot
-      )
+        snapshot: current_snapshot,
+      }
+
+      attributes.merge!(user: user) if user
+      attributes.merge!(task_performed_by: task_name) if task_name
+
+      new_action = actions.build(attributes)
       # Mongoid will not fire creation callbacks on embedded documents, so we
       # need to trigger this manually. There is a `cascade_callbacks` option on
       # `embeds_many`, but it doesn't appear to trigger creation events on
@@ -312,8 +245,15 @@ class Artefact
   end
 
   def snapshot
-    reconcile_tag_ids
-    attributes.except "_id", "created_at", "updated_at", "actions"
+    attributes
+      .except("_id", "created_at", "updated_at", "actions")
+  end
+
+  def need_id=(new_need_id)
+    super
+
+    need_ids << new_need_id if new_need_id.present? && ! need_ids.include?(new_need_id)
+    new_need_id
   end
 
   private
@@ -329,6 +269,19 @@ class Artefact
         errors.add(:paths, "are not all valid absolute URL paths")
       end
     end
+  end
+
+  def filter_out_empty_need_ids
+    return if need_ids.blank?
+    need_ids.reject!(&:blank?)
+  end
+
+  def format_of_new_need_ids
+    return if need_ids.blank?
+
+    # http://api.rubyonrails.org/classes/ActiveModel/Dirty.html
+    new_need_ids = need_ids_was.blank? ? need_ids : need_ids - need_ids_was
+    errors.add(:need_ids, "must be six-digit integer strings") if new_need_ids.any? {|need_id| need_id !~ /\A\d{6}\z/ }
   end
 
   def valid_url_path?(path)

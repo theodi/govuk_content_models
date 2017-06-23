@@ -1,67 +1,65 @@
-require "workflow"
-require "fact_check_address"
+require_dependency "workflow"
 
 class Edition
   include Mongoid::Document
   include Mongoid::Timestamps
   include Workflow
+  include RecordableActions
 
   field :panopticon_id,        type: String
   field :version_number,       type: Integer,  default: 1
   field :sibling_in_progress,  type: Integer,  default: nil
-  field :business_proposition, type: Boolean,  default: false
 
   field :title,                type: String
+  field :in_beta,              type: Boolean,  default: false
   field :created_at,           type: DateTime, default: lambda { Time.zone.now }
+  field :publish_at,           type: DateTime
   field :overview,             type: String
-  field :alternative_title,    type: String
   field :slug,                 type: String
-  field :section,              type: String
-  field :department,           type: String
   field :rejected_count,       type: Integer,  default: 0
-  field :tags,                 type: String
 
   field :assignee,             type: String
+  field :reviewer,             type: String
   field :creator,              type: String
   field :publisher,            type: String
   field :archiver,             type: String
+  field :major_change,         type: Boolean, default: false
+  field :change_note,          type: String
+  field :review_requested_at,  type: DateTime
 
-  GOVSPEAK_FIELDS = []
+  belongs_to :assigned_to, class_name: "User", optional: true
 
-  belongs_to :assigned_to, class_name: "User"
-
-  scope :lined_up,            where(state: "lined_up")
-  scope :draft,               where(state: "draft")
-  scope :amends_needed,       where(state: "amends_needed")
-  scope :in_review,           where(state: "in_review")
-  scope :fact_check,          where(state: "fact_check")
-  scope :fact_check_received, where(state: "fact_check_received")
-  scope :ready,               where(state: "ready")
-  scope :published,           where(state: "published")
-  scope :archived,            where(state: "archived")
-  scope :in_progress,         where(:state.nin => ["archived", "published"])
-  scope :assigned_to,         lambda { |user|
+  # state_machine comes from Workflow
+  state_machine.states.map(&:name).each do |state|
+    scope state, lambda { where(state: state) }
+  end
+  scope :archived_or_published, lambda { where(:state.in => %w(archived published)) }
+  scope :in_progress, lambda { where(:state.nin => %w(archived published)) }
+  scope :assigned_to, lambda { |user|
     if user
       where(assigned_to_id: user.id)
     else
       where(:assigned_to_id.exists => false)
     end
   }
+  scope :major_updates, lambda { where(major_change: true) }
 
   validates :title, presence: true
-  validates :version_number, presence: true
+  validates :version_number, presence: true, uniqueness: { scope: :panopticon_id }
   validates :panopticon_id, presence: true
   validates_with SafeHtml
+  validates_with LinkValidator, on: :update, unless: :archived?
+  validates_with ReviewerValidator
+  validates_presence_of :change_note, if: :major_change
 
   before_save :check_for_archived_artefact
   before_destroy :destroy_artefact
 
-  index "assigned_to_id"
-  index "panopticon_id"
-  index "state"
-
-  class << self; attr_accessor :fields_to_clone end
-  @fields_to_clone = []
+  index assigned_to_id: 1
+  index({ panopticon_id: 1, version_number: 1 }, unique: true)
+  index state: 1
+  index created_at: 1
+  index updated_at: 1
 
   alias_method :admin_list_title, :title
 
@@ -78,11 +76,11 @@ class Edition
   end
 
   def previous_siblings
-    siblings.where(:version_number.lt => version_number)
+    siblings.where(:version_number.lt => version_number).order(version_number: "asc")
   end
 
   def subsequent_siblings
-    siblings.where(:version_number.gt => version_number)
+    siblings.where(:version_number.gt => version_number).order(version_number: "asc")
   end
 
   def latest_edition?
@@ -102,15 +100,46 @@ class Edition
   end
 
   def can_create_new_edition?
-    subsequent_siblings.in_progress.empty?
+    return false if retired_format?
+    !scheduled_for_publishing? && subsequent_siblings.in_progress.empty?
+  end
+
+  def retired_format?
+    Artefact::RETIRED_FORMATS.include? format.underscore
+  end
+
+  def major_updates_in_series
+    history.published.major_updates
+  end
+
+  def latest_major_update
+    major_updates_in_series.first
+  end
+
+  def latest_change_note
+    if latest_major_update.present?
+      latest_major_update.change_note
+    end
+  end
+
+  def public_updated_at
+    if latest_major_update.present?
+      latest_major_update.updated_at
+    elsif has_ever_been_published?
+      first_edition_of_published.updated_at
+    end
+  end
+
+  def has_ever_been_published?
+    series.map(&:state).include?('published')
+  end
+
+  def first_edition_of_published
+    series.archived_or_published.order(version_number: "asc").first
   end
 
   def meta_data
     PublicationMetadata.new self
-  end
-
-  def fact_check_email_address
-    FactCheckAddress.new.for_edition(self)
   end
 
   def get_next_version_number
@@ -124,9 +153,9 @@ class Edition
 
   def indexable_content_without_parts
     if respond_to?(:body)
-      "#{alternative_title} #{Govspeak::Document.new(body).to_text}".strip
+      "#{Govspeak::Document.new(body).to_text}".strip
     else
-      alternative_title
+      ""
     end
   end
 
@@ -141,11 +170,15 @@ class Edition
   # If the new clone is of the same type, we can copy all its fields over; if
   # we are changing the type of the edition, any fields other than the base
   # fields will likely be meaningless.
-  def fields_to_copy(edition_class)
-    edition_class == self.class ? self.class.fields_to_clone : []
+  def fields_to_copy(target_class)
+    if target_class == self.class
+      base_field_keys + type_specific_field_keys
+    else
+      base_field_keys + common_type_specific_field_keys(target_class)
+    end
   end
 
-  def build_clone(edition_class=nil)
+  def build_clone(target_class=nil)
     unless state == "published"
       raise "Cloning of non published edition not allowed"
     end
@@ -154,38 +187,50 @@ class Edition
              is not allowed"
     end
 
-    edition_class = self.class unless edition_class
-    new_edition = edition_class.new(title: self.title,
-                                    version_number: get_next_version_number)
+    target_class = self.class unless target_class
+    new_edition = target_class.new(version_number: get_next_version_number)
 
-    real_fields_to_merge = fields_to_copy(edition_class) +
-                           [:panopticon_id, :overview, :alternative_title,
-                            :slug, :section, :department]
-
-    real_fields_to_merge.each do |attr|
+    fields_to_copy(target_class).each do |attr|
       new_edition[attr] = read_attribute(attr)
     end
 
-    if edition_class == AnswerEdition and %w(GuideEdition ProgrammeEdition TransactionEdition).include?(self.class.name)
-      new_edition.body = whole_body
-    end
-
-    if edition_class == TransactionEdition and %w(AnswerEdition GuideEdition ProgrammeEdition).include?(self.class.name)
-      new_edition.more_information = whole_body
-    end
-
-    if edition_class == GuideEdition and self.is_a?(AnswerEdition)
-      new_edition.parts.build(title: "Part One", body: whole_body,
-                              slug: "part-one")
+    # If the type is changing, then take the combined body (whole_body) from
+    # the old and decide where to put it in the new.
+    #
+    # Where the type is not changing, the body will already have been copied
+    # above.
+    #
+    # We don't need to copy parts between Parted types here, because the
+    # Parted module does that.
+    if target_class != self.class && !cloning_between_parted_types?(new_edition)
+      new_edition.clone_whole_body_from(self)
     end
 
     new_edition
   end
 
-  def self.find_or_create_from_panopticon_data(panopticon_id,
-                                               importing_user, api_credentials)
+  def clone_whole_body_from(origin_edition)
+    if self.respond_to?(:parts)
+      self.setup_default_parts if self.respond_to?(:setup_default_parts)
+      self.parts.build(title: "Part One", body: origin_edition.whole_body, slug: "part-one")
+    elsif self.respond_to?(:more_information=)
+      self.more_information = origin_edition.whole_body
+    elsif self.respond_to?(:body=)
+      self.body = origin_edition.whole_body
+    elsif self.respond_to?(:licence_overview=)
+      self.licence_overview = origin_edition.whole_body
+    else
+      raise "Nowhere to copy whole_body content for conversion from: #{origin_edition.class} to: #{self.class}"
+    end
+  end
+
+  def cloning_between_parted_types?(new_edition)
+    self.respond_to?(:parts) && new_edition.respond_to?(:parts)
+  end
+
+  def self.find_or_create_from_panopticon_data(panopticon_id, importing_user)
     existing_publication = Edition.where(panopticon_id: panopticon_id)
-                                  .order_by([:version_number, :desc]).first
+      .order_by(version_number: :desc).first
     return existing_publication if existing_publication
 
     raise "Artefact not found" unless metadata = Artefact.find(panopticon_id)
@@ -193,26 +238,19 @@ class Edition
     importing_user.create_edition(metadata.kind.to_sym,
       panopticon_id: metadata.id,
       slug: metadata.slug,
-      title: metadata.name,
-      section: metadata.section,
-      department: metadata.department,
-      business_proposition: metadata.business_proposition)
+      title: metadata.name)
   end
 
   def self.find_and_identify(slug, edition)
     scope = where(slug: slug)
 
     if edition.present? and edition == "latest"
-      scope.order_by(:version_number).last
+      scope.order_by(version_number: :asc).last
     elsif edition.present?
       scope.where(version_number: edition).first
     else
-      scope.where(state: "published").order_by(:created_at).last
+      scope.where(state: "published").order(version_number: :desc).first
     end
-  end
-
-  def panopticon_uri
-    Plek.current.find("panopticon") + "/artefacts/" + (panopticon_id || slug).to_s
   end
 
   def format
@@ -228,7 +266,7 @@ class Edition
   end
 
   def safe_to_preview?
-    true
+    !archived?
   end
 
   def has_sibling_in_progress?
@@ -243,27 +281,23 @@ class Edition
   end
 
   def was_published
-    previous_siblings.all.each(&:archive)
+    previous_siblings.each { |s| s.perform_event_without_validations(:archive) }
     notify_siblings_of_published_edition
   end
 
-  def update_from_artefact(artefact)
-    self.title = artefact.name unless published?
+  def update_slug_from_artefact(artefact)
     self.slug = artefact.slug
-    self.section = artefact.section
-    self.department = artefact.department
-    self.business_proposition = artefact.business_proposition
     self.save!
   end
 
   def check_for_archived_artefact
     if panopticon_id
       a = Artefact.find(panopticon_id)
-      if a.state == "archived" and changed_attributes.any?
+      if a.state == "archived" and changes.any?
         # If we're only changing the state to archived, that's ok
         # Any other changes are not allowed
         allowed_keys = ["state", "updated_at"]
-        unless ((changed_attributes.keys - allowed_keys).empty?) and state == "archived"
+        unless ((changes.keys - allowed_keys).empty?) and state == "archived"
           raise "Editing of an edition with an Archived artefact is not allowed"
         end
       end
@@ -286,5 +320,23 @@ class Edition
     if can_destroy? && siblings.empty?
       Artefact.find(self.panopticon_id).destroy
     end
+  end
+
+private
+  def base_field_keys
+    [
+      :title,
+      :panopticon_id,
+      :overview,
+      :slug,
+    ]
+  end
+
+  def type_specific_field_keys
+    (self.fields.keys - Edition.fields.keys).map(&:to_sym)
+  end
+
+  def common_type_specific_field_keys(target_class)
+    ((self.fields.keys & target_class.fields.keys) - Edition.fields.keys).map(&:to_sym)
   end
 end

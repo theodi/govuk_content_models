@@ -12,18 +12,18 @@ class SimpleSmartAnswerEdition < Edition
       field :next_node, type: String
       field :order, type: Integer
 
-      default_scope order_by([:order, :asc])
+      default_scope lambda { order_by(order: :asc) }
 
       validates :label, :next_node, presence: true
       validates :slug, :format => {:with => /\A[a-z0-9-]+\z/}
 
-      before_validation :populate_slug_if_blank
+      before_validation :populate_slug
 
       private
 
-      def populate_slug_if_blank
-        if self.slug.blank? and self.label.present?
-          self.slug = ActiveSupport::Inflector.parameterize(self.label)
+      def populate_slug
+        if label.present? && !slug_changed?
+          self.slug = ActiveSupport::Inflector.parameterize(label)
         end
       end
     end

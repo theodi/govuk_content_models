@@ -19,7 +19,7 @@ class TravelAdviceEditionTest < ActiveSupport::TestCase
     ed.change_description = "Some things"
     ed.synonyms = ["Foo", "Bar"]
     ed.parts.build(:title => "Part One", :slug => "one")
-    ed.safely.save!
+    ed.save!
 
     ed = TravelAdviceEdition.first
     assert_equal "Travel advice for Aruba", ed.title
@@ -213,28 +213,6 @@ class TravelAdviceEditionTest < ActiveSupport::TestCase
     end
   end
 
-  context "fixing user input" do
-    setup do
-      @ed = FactoryGirl.build(:travel_advice_edition)
-    end
-
-    should "convert smart quotes in the summary field" do
-      @ed.summary = "This is a [link](https://www.gov.uk/ “link”)"
-      @ed.save!
-
-      @ed.reload
-      assert_equal 'This is a [link](https://www.gov.uk/ "link")', @ed.summary
-    end
-
-    should "convert smart quotes in part bodies" do
-      @ed.parts.build(:title => 'One', :slug => 'one', :body => "This is a [link](https://www.gov.uk/ “link”)")
-      @ed.save!
-
-      @ed.reload
-      assert_equal 'This is a [link](https://www.gov.uk/ "link")', @ed.parts.first.body
-    end
-  end
-
   should "have a published scope" do
     e1 = FactoryGirl.create(:draft_travel_advice_edition)
     e2 = FactoryGirl.create(:published_travel_advice_edition)
@@ -275,7 +253,7 @@ class TravelAdviceEditionTest < ActiveSupport::TestCase
       should "do nothing if country_slug is not set" do
         ed = TravelAdviceEdition.new(:country_slug => '')
         ed.valid?
-        assert_equal nil, ed.version_number
+        assert_nil ed.version_number
       end
     end
 
@@ -332,7 +310,7 @@ class TravelAdviceEditionTest < ActiveSupport::TestCase
     end
 
     should "return nil if there is no previous version" do
-      assert_equal nil, @ed1.previous_version
+      assert_nil @ed1.previous_version
     end
   end
 
@@ -341,6 +319,7 @@ class TravelAdviceEditionTest < ActiveSupport::TestCase
       @published = FactoryGirl.create(:published_travel_advice_edition, :country_slug => 'aruba',
                                       :published_at => 3.days.ago, :change_description => 'Stuff changed')
       @ed = FactoryGirl.create(:travel_advice_edition, :country_slug => 'aruba')
+      @published.reload
     end
 
     should "publish the edition and archive related editions" do
@@ -380,42 +359,44 @@ class TravelAdviceEditionTest < ActiveSupport::TestCase
                                       :published_at => 3.days.ago, :change_description => 'Stuff changed')
       @published.reviewed_at = 2.days.ago
       @published.save!
+      @published.reload
 
       Timecop.freeze(1.days.ago) do
         # this is done to make sure there's a significant difference in time
         # between creating the edition and it being published
-        @ed = FactoryGirl.create(:travel_advice_edition, :country_slug => 'aruba')
+        @edition = FactoryGirl.create(:travel_advice_edition, :country_slug => 'aruba')
       end
     end
 
     should "be updated to published time when edition is published" do
-      @ed.change_description = "Did some stuff"
-      @ed.publish!
-      assert_equal @ed.published_at, @ed.reviewed_at
+      @edition.change_description = "Did some stuff"
+      @edition.publish!
+      assert_equal @edition.published_at, @edition.reviewed_at
     end
 
     should "be set to the previous version's reviewed_at when a minor update is published" do
-      @ed.minor_update = true
-      @ed.publish!
-      assert_equal @published.reviewed_at, @ed.reviewed_at
+      @edition.minor_update = true
+      @edition.publish!
+      assert_equal @published.reviewed_at, @edition.reviewed_at
     end
 
     should "be able to be updated without affecting other dates" do
-      published_at = @ed.published_at
+      @edition.published_at = Time.zone.now
+      @edition.save!
       Timecop.freeze(1.day.from_now) do
-        @ed.reviewed_at = Time.zone.now
-        assert_equal published_at, @ed.published_at
+        @edition.reviewed_at = Time.zone.now
+        assert_equal @edition.published_at, @edition.published_at
       end
     end
 
     should "be able to update reviewed_at on a published edition" do
-      @ed.minor_update = true
-      @ed.publish!
+      @edition.minor_update = true
+      @edition.publish!
       Timecop.freeze(1.day.from_now) do
         new_time = Time.zone.now
-        @ed.reviewed_at = new_time
-        @ed.save!
-        assert_equal new_time.utc.to_i, @ed.reviewed_at.to_i
+        @edition.reviewed_at = new_time
+        @edition.save!
+        assert_equal new_time.utc.to_i, @edition.reviewed_at.to_i
       end
     end
   end

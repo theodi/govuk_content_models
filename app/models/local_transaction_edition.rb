@@ -1,23 +1,18 @@
-require "expectant"
 require "local_service"
 require "edition"
 
 class LocalTransactionEdition < Edition
-  include Expectant
+  field :lgsl_code, type: Integer
+  field :lgil_override, type: Integer
+  field :lgil_code, type: Integer
+  field :introduction, type: String
+  field :more_information, type: String
+  field :need_to_know, type: String
 
-  field :lgsl_code,         type: Integer
-  field :lgil_override,     type: Integer
-  field :introduction,      type: String
-  field :more_information,  type: String
-
-  GOVSPEAK_FIELDS = Edition::GOVSPEAK_FIELDS + [:introduction, :more_information]
-
-  @fields_to_clone = [
-    :lgsl_code, :introduction, :more_information,
-    :minutes_to_complete, :expectation_ids
-  ]
+  GOVSPEAK_FIELDS = [:introduction, :more_information, :need_to_know]
 
   validate :valid_lgsl_code
+  validates :lgil_code, numericality: { only_integer: true, message: "can only be whole number between 0 and 999." }
 
   def valid_lgsl_code
     if ! self.service
@@ -35,11 +30,6 @@ class LocalTransactionEdition < Edition
 
   def service
     LocalService.find_by_lgsl_code(lgsl_code)
-  end
-
-  def service_provided_by?(snac)
-    authority = LocalAuthority.find_by_snac(snac)
-    authority && authority.provides_service?(lgsl_code)
   end
 
   def whole_body

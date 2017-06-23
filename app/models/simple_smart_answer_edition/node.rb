@@ -14,7 +14,7 @@ class SimpleSmartAnswerEdition < Edition
     field :order, type: Integer
     field :kind, type: String
 
-    default_scope order_by([:order, :asc])
+    default_scope lambda { order_by(order: :asc) }
 
     GOVSPEAK_FIELDS = [:body]
 
@@ -28,7 +28,6 @@ class SimpleSmartAnswerEdition < Edition
     validates :slug, :presence => true, :format => {:with => /\A[a-z0-9-]+\z/}
 
     validate :outcomes_have_no_options
-
     validates_with SafeHtml
 
     private

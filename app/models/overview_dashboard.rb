@@ -1,4 +1,4 @@
-require "safe_html"
+require_dependency "safe_html"
 
 class OverviewDashboard
   include Mongoid::Document
@@ -7,9 +7,8 @@ class OverviewDashboard
   UNASSIGNED_KEY = "**UNASSIGNED**"
 
   field :dashboard_type,      type: String
-  field :result_group,        type: Integer
+  field :result_group,        type: String
   field :count,               type: Integer
-  field :lined_up,            type: Integer
   field :draft,               type: Integer
   field :amends_needed,       type: Integer
   field :in_review,           type: Integer
@@ -18,8 +17,4 @@ class OverviewDashboard
   field :fact_check,          type: Integer
   field :published,           type: Integer
   field :archived,            type: Integer
-
-  GOVSPEAK_FIELDS = []
-
-  validates_with SafeHtml
 end

@@ -19,12 +19,7 @@ class ArtefactTest < ActiveSupport::TestCase
       assert a.errors[:slug].any?
     end
 
-    should "allow slashes in slugs when the namespace is 'done'" do
-      a = FactoryGirl.build(:artefact, slug: "done/its-a-nice-day")
-      assert a.valid?
-    end
-
-    should "not allow slashes in slugs when the namespace is not 'done'" do
+    should "not allow slashes in slugs when the namespace is not 'done' or 'help'" do
       a = FactoryGirl.build(:artefact, slug: "something-else/its-a-nice-day")
       refute a.valid?
       assert a.errors[:slug].any?
@@ -32,6 +27,16 @@ class ArtefactTest < ActiveSupport::TestCase
 
     should "allow travel-advice to have a slug prefixed with 'foreign-travel-advice/'" do
       a = FactoryGirl.build(:artefact, slug: "foreign-travel-advice/aruba", kind: "travel-advice")
+      assert a.valid?
+    end
+
+    should "allow help pages to have a slug prefixed with 'help/'" do
+      a = FactoryGirl.build(:artefact, slug: "help/a-page", kind: "help_page")
+      assert a.valid?
+    end
+
+    should "allow done pages to have a slug prefixed with 'done/'" do
+      a = FactoryGirl.build(:artefact, slug: "done/a-page", kind: "completed_transaction")
       assert a.valid?
     end
 
@@ -45,31 +50,6 @@ class ArtefactTest < ActiveSupport::TestCase
       a = FactoryGirl.build(:artefact, slug: "foreign-travel-advice/aruba", kind: "answer")
       refute a.valid?
       assert a.errors[:slug].any?
-    end
-
-    should "allow a government prefix for Inside Government artefacts" do
-      a = FactoryGirl.build(:artefact, slug: "government/slug", kind: "case_study")
-      assert a.valid?
-    end
-
-    should "allow a government prefix and multiple path parts for Inside Government artefacts" do
-      a = FactoryGirl.build(:artefact, slug: "government/something/somewhere/somehow/slug", kind: "case_study")
-      assert a.valid?
-    end
-
-    should "not allow a government prefix with invalid path parts" do
-      a = FactoryGirl.build(:artefact, slug: "government/SomeThing/some.where/somehow/slug", kind: "case_study")
-      refute a.valid?
-    end
-    
-    should "require a government prefix for Inside Government artefacts" do
-      a = FactoryGirl.build(:artefact, slug: "slug", kind: "case_study")
-      refute a.valid?
-    end
-
-    should "not require a government prefix for Detailed Guides" do
-      a = FactoryGirl.build(:artefact, slug: "slug", kind: "detailed_guide")
-      assert a.valid?
     end
 
     context "help page special case" do
@@ -88,6 +68,83 @@ class ArtefactTest < ActiveSupport::TestCase
         a = FactoryGirl.build(:artefact, :slug => "help/foo", :kind => "answer")
         refute a.valid?
         assert_equal 1, a.errors[:slug].count
+      end
+    end
+  end
+
+  context "#need_ids" do
+    should "be empty by default" do
+      assert_empty FactoryGirl.build(:artefact).need_ids
+    end
+
+    should "do validations if nil" do
+      artefact = FactoryGirl.create(:artefact, need_ids: ["100001"])
+      artefact.need_ids = nil
+
+      assert_nothing_raised { artefact.valid? }
+    end
+
+    should "filter out empty strings" do
+      artefact = FactoryGirl.create(:artefact, need_ids: ["", "100002"])
+      assert_equal ["100002"], artefact.reload.need_ids
+    end
+
+    should "store multiple needs related to an artefact" do
+      artefact = FactoryGirl.create(:artefact, need_ids: ["100001", "100002"])
+      assert_equal ["100001", "100002"], artefact.reload.need_ids
+    end
+
+    should "be six-digit integers" do
+      artefact = FactoryGirl.build(:artefact, need_ids: ["B1231"])
+
+      refute artefact.valid?
+      assert_includes artefact.errors[:need_ids], "must be six-digit integer strings"
+    end
+
+    should "not validate need ids that were migrated from the singular need_id field" do
+      artefact = FactoryGirl.create(:artefact)
+      # simulate what happened during migration
+      artefact.set(need_ids: ['As an employer
+                                I need to know which type of DBS check an employee needs
+                                so that I can apply for the correct one'])
+
+      artefact.need_ids << "100045"
+
+      assert artefact.valid?
+    end
+
+    context "for backwards compatibility" do
+      setup do
+        @artefact = FactoryGirl.create(:artefact)
+      end
+
+      should "append to need_ids when need_id is assigned" do
+        @artefact.need_id = "100045"
+
+        assert_equal "100045", @artefact.need_id
+        assert_includes @artefact.need_ids, "100045"
+      end
+
+      should "append to existing need_ids when need_id is assigned" do
+        @artefact.set(need_ids: ["100044"])
+        @artefact.set(need_id: "100044")
+
+        @artefact.need_id = "100045"
+
+        assert_equal "100045", @artefact.need_id
+        assert_equal %w(100044 100045), @artefact.need_ids
+      end
+
+      # this should only matter till the time we have both fields
+      # need_id and need_ids. can delete this test once we unset need_id.
+      should "keep need_ids unchanged when need_id is removed" do
+        @artefact.set(need_ids: %w(100044 100045))
+        @artefact.set(need_id: "100044")
+
+        @artefact.need_id = nil
+
+        assert_nil @artefact.need_id
+        assert_equal %w(100044 100045), @artefact.need_ids
       end
     end
   end
@@ -166,92 +223,55 @@ class ArtefactTest < ActiveSupport::TestCase
     assert_equal "other", a.kind
   end
 
-  test "should store and return related artefacts in order" do
-    a = Artefact.create!(slug: "a", name: "a", kind: "place", need_id: 1, owning_app: "x")
-    b = Artefact.create!(slug: "b", name: "b", kind: "place", need_id: 2, owning_app: "x")
-    c = Artefact.create!(slug: "c", name: "c", kind: "place", need_id: 3, owning_app: "x")
-
-    a.related_artefacts = [b, c]
-    a.save!
-    a.reload
-
-    assert_equal [b, c], a.ordered_related_artefacts
-  end
-
-  test "should store and return related artefacts in order, even when not in natural order" do
-    a = Artefact.create!(slug: "a", name: "a", kind: "place", need_id: 1, owning_app: "x")
-    b = Artefact.create!(slug: "b", name: "b", kind: "place", need_id: 2, owning_app: "x")
-    c = Artefact.create!(slug: "c", name: "c", kind: "place", need_id: 3, owning_app: "x")
-
-    a.related_artefacts = [c, b]
-    a.save!
-    a.reload
-
-    assert_equal [c, b], a.ordered_related_artefacts
-  end
-
-  test "should store and return related artefacts in order, with a scope" do
-    a = Artefact.create!(slug: "a", name: "a", kind: "place", need_id: 1, owning_app: "x")
-    b = Artefact.create!(state: "live", slug: "b", name: "b", kind: "place", need_id: 2, owning_app: "x")
-    c = Artefact.create!(slug: "c", name: "c", kind: "place", need_id: 3, owning_app: "x")
-    d = Artefact.create!(state: "live", slug: "d", name: "d", kind: "place", need_id: 3, owning_app: "x")
-
-    a.related_artefacts = [d, c, b]
-    a.save!
-    a.reload
-
-    assert_equal [d, b], a.ordered_related_artefacts(a.related_artefacts.where(state: "live"))
-  end
-
-  test "published_related_artefacts should return all non-publisher artefacts, but only published publisher artefacts" do
-    # because currently only publisher has an idea of "published"
-
-    parent = Artefact.create!(slug: "parent", name: "Parent", kind: "guide", owning_app: "x")
-
-    a = Artefact.create!(slug: "a", name: "has no published editions", kind: "guide", owning_app: "publisher")
-    Edition.create!(panopticon_id: a.id, title: "Unpublished", state: "draft")
-    parent.related_artefacts << a
-
-    b = Artefact.create!(slug: "b", name: "has a published edition", kind: "guide", owning_app: "publisher")
-    Edition.create!(panopticon_id: b.id, title: "Published", state: "published")
-    parent.related_artefacts << b
-
-    c = Artefact.create!(slug: "c", name: "not a publisher artefact", kind: "place", owning_app: "x")
-    parent.related_artefacts << c
-    parent.save!
-
-    assert_equal [b.slug, c.slug], parent.published_related_artefacts.map(&:slug)
-  end
-
   test "should raise a not found exception if the slug doesn't match" do
     assert_raise Mongoid::Errors::DocumentNotFound do
       Artefact.from_param("something-fake")
     end
   end
 
-  test "on save update metadata with associated publication" do
-    FactoryGirl.create(:tag, tag_id: "test-section", title: "Test section", tag_type: "section")
-    artefact = FactoryGirl.create(:artefact,
-        slug: "foo-bar",
-        kind: "answer",
-        name: "Foo bar",
-        primary_section: "test-section",
-        sections: ["test-section"],
-        department: "Test dept",
-        owning_app: "publisher",
-    )
+  should "update the edition's slug when a draft artefact is saved" do
+    artefact = FactoryGirl.create(:draft_artefact)
+    edition = FactoryGirl.create(:answer_edition, panopticon_id: artefact.id)
 
-    user1 = FactoryGirl.create(:user)
-    edition = AnswerEdition.find_or_create_from_panopticon_data(artefact.id, user1, {})
-
-    assert_equal artefact.name, edition.title
-    assert_equal artefact.section, edition.section
-
-    artefact.name = "Babar"
-    artefact.save
+    artefact.slug = "something-something-draft"
+    artefact.save!
 
     edition.reload
-    assert_equal artefact.name, edition.title
+    assert_equal artefact.slug, edition.slug
+  end
+
+  should "not touch the updated_at field on the editions when the artefact is saved but the slug hasn't changed" do
+    artefact = FactoryGirl.create(:draft_artefact)
+    edition = FactoryGirl.create(:answer_edition, panopticon_id: artefact.id)
+    old_updated_at = 2.days.ago.to_time
+    edition.set(updated_at: old_updated_at)
+
+    artefact.language = "cy"
+    artefact.save!
+
+    edition.reload
+    assert_equal old_updated_at.utc.iso8601, edition.updated_at.utc.iso8601
+  end
+
+  should "not update the edition's slug when a live artefact is saved" do
+    artefact = FactoryGirl.create(:live_artefact, slug: "something-something-live")
+    edition = FactoryGirl.create(:answer_edition, panopticon_id: artefact.id, slug: "something-else")
+
+    artefact.save!
+
+    edition.reload
+    assert_equal "something-else", edition.slug
+  end
+
+  should "not update the edition's slug when an archived artefact is saved" do
+    artefact = FactoryGirl.create(:live_artefact, slug: "something-something-live")
+    edition = FactoryGirl.create(:answer_edition, panopticon_id: artefact.id, slug: "something-else")
+
+    artefact.state = 'archived'
+    artefact.save!
+
+    edition.reload
+    assert_equal "something-else", edition.slug
   end
 
   test "should not let you edit the slug if the artefact is live" do
@@ -272,24 +292,19 @@ class ArtefactTest < ActiveSupport::TestCase
   # should continue to work in the way it has been:
   # i.e. you can edit everything but the name/title for published content in panop
   test "on save title should not be applied to already published content" do
-    FactoryGirl.create(:tag, tag_id: "test-section", title: "Test section", tag_type: "section")
     artefact = FactoryGirl.create(:artefact,
         slug: "foo-bar",
         kind: "answer",
         name: "Foo bar",
-        primary_section: "test-section",
-        sections: ["test-section"],
-        department: "Test dept",
         owning_app: "publisher",
     )
 
     user1 = FactoryGirl.create(:user)
-    edition = AnswerEdition.find_or_create_from_panopticon_data(artefact.id, user1, {})
+    edition = AnswerEdition.find_or_create_from_panopticon_data(artefact.id, user1)
     edition.state = "published"
     edition.save!
 
     assert_equal artefact.name, edition.title
-    assert_equal artefact.section, edition.section
 
     artefact.name = "Babar"
     artefact.save
@@ -306,7 +321,7 @@ class ArtefactTest < ActiveSupport::TestCase
         owning_app: "publisher",
     )
     user1 = FactoryGirl.create(:user)
-    edition = AnswerEdition.find_or_create_from_panopticon_data(artefact.id, user1, {})
+    edition = AnswerEdition.find_or_create_from_panopticon_data(artefact.id, user1)
 
     refute artefact.any_editions_published?
 
@@ -314,15 +329,6 @@ class ArtefactTest < ActiveSupport::TestCase
     edition.save!
 
     assert artefact.any_editions_published?
-  end
-
-  test "should have a specialist_body field present for markdown content" do
-    artefact = Artefact.create!(slug: "parent", name: "Harry Potter", kind: "guide", owning_app: "x")
-    refute_includes artefact.attributes, "specialist_body"
-
-    artefact.specialist_body = "Something wicked this way comes"
-    assert_includes artefact.attributes, "specialist_body"
-    assert_equal "Something wicked this way comes", artefact.specialist_body
   end
 
   test "should have 'video' as a supported FORMAT" do
@@ -350,7 +356,7 @@ class ArtefactTest < ActiveSupport::TestCase
     artefact.update_attributes_as(user1, state: "archived")
     artefact.save!
 
-    editions.each &:reload
+    editions.each(&:reload)
     editions.each do |edition|
       assert_equal "archived", edition.state
     end
@@ -361,6 +367,21 @@ class ArtefactTest < ActiveSupport::TestCase
     end
   end
 
+  test "should not run validations on editions when archiving" do
+    artefact = FactoryGirl.create(:artefact, state: "live")
+    edition = FactoryGirl.create(:help_page_edition, panopticon_id: artefact.id, state: 'published')
+    user1 = FactoryGirl.create(:user)
+
+    # Make the edition invalid, check that it persisted the invalid state
+    edition.update_attribute(:title, nil)
+    assert_nil edition.reload.title
+
+    artefact.update_attributes_as(user1, state: "archived")
+    artefact.save!
+
+    assert_equal("archived", edition.reload.state)
+  end
+
   test "should restrict what attributes can be updated on an edition that has an archived artefact" do
     artefact = FactoryGirl.create(:artefact, state: "live")
     edition = FactoryGirl.create(:programme_edition, panopticon_id: artefact.id, state: "published")
@@ -369,13 +390,6 @@ class ArtefactTest < ActiveSupport::TestCase
     assert_raise RuntimeError do
       edition.update_attributes({state: "archived", title: "Shabba", slug: "do-not-allow"})
     end
-  end
-
-  should "not remove double dashes in a Detailed Guide slug" do
-    a = FactoryGirl.create(:artefact, slug: "duplicate-slug--1", kind: "detailed_guide")
-    a.reload
-
-    assert_equal "duplicate-slug--1", a.slug
   end
 
   context "artefact language" do
@@ -400,90 +414,6 @@ class ArtefactTest < ActiveSupport::TestCase
 
       assert ! a.valid?
     end
-
-    should "has has_extended_chars field set to false by default" do
-      a = Artefact.new
-      assert_equal false, a.need_extended_font
-    end
-
-    should "allow has_extended_chars to be set" do
-      a = FactoryGirl.build(:artefact)
-      a.need_extended_font = true
-      a.save
-
-      a = Artefact.first
-      assert_equal true, a.need_extended_font
-    end
-  end
-
-  context "returning json representation" do
-    context "returning tags" do
-      setup do
-        FactoryGirl.create(:tag, :tag_type => 'section', :tag_id => 'crime', :title => 'Crime')
-        FactoryGirl.create(:tag, :tag_type => 'section', :tag_id => 'justice', :title => 'Justice', :description => "All about justice")
-        FactoryGirl.create(:tag, :tag_type => 'legacy_source', :tag_id => 'directgov', :title => 'Directgov')
-        FactoryGirl.create(:tag, :tag_type => 'legacy_source', :tag_id => 'businesslink', :title => 'Business Link')
-
-        @a = FactoryGirl.create(:artefact, :slug => 'fooey')
-      end
-
-      should "return empty array of tags and tag_ids" do
-        hash = @a.as_json
-
-        assert_equal [], hash['tag_ids']
-        assert_equal [], hash['tags']
-      end
-
-      context "for an artefact with tags" do
-        setup do
-          @a.sections = ['justice']
-          @a.legacy_sources = ['businesslink']
-          @a.save!
-        end
-
-        should "return an array of tag_id strings in tag_ids" do
-          hash = @a.as_json
-
-          assert_equal ['justice', 'businesslink'], hash['tag_ids']
-        end
-
-        should "return an array of tag objects in tags" do
-          hash = @a.as_json
-
-          expected = [
-            {
-              :id => 'justice',
-              :title => 'Justice',
-              :type => 'section',
-              :description => 'All about justice',
-              :short_description => nil
-            },
-            {
-              :id => 'businesslink',
-              :title => 'Business Link',
-              :type => 'legacy_source',
-              :description => nil,
-              :short_description => nil
-            }
-          ]
-          assert_equal expected, hash['tags']
-        end
-      end
-    end
-  end
-
-  context "artefact related external links" do
-    should "have none by default" do
-      artefact = FactoryGirl.create(:artefact)
-      assert_equal 0, artefact.external_links.length
-    end
-
-    should "contain the title and URL of the link" do
-      artefact = FactoryGirl.create(:artefact)
-      artefact.external_links << ArtefactExternalLink.new(:title => "Foo", :url => "http://bar.com")
-      assert_equal 1, artefact.external_links.length
-      assert_equal "Foo", artefact.external_links.first.title
-    end
   end
 
   should "have an archived? helper method" do
@@ -492,99 +422,5 @@ class ArtefactTest < ActiveSupport::TestCase
 
     refute published_artefact.archived?
     assert archived_artefact.archived?
-  end
-
-  should "have a related_items method which discards artefacts that are archived or completed transactions" do
-    generic = FactoryGirl.create(:artefact, slug: "generic")
-    archived = FactoryGirl.create(:artefact, :slug => "archived", :state => "archived")
-    completed = FactoryGirl.create(:artefact, slug: "completed-transaction", kind: "completed_transaction")
-
-    assert_equal [generic], Artefact.relatable_items
-  end
-
-  context "related artefacts grouped by section tags" do
-    setup do
-      FactoryGirl.create(:tag, :tag_id => "fruit", :tag_type => 'section', :title => "Fruit")
-      FactoryGirl.create(:tag, :tag_id => "fruit/simple", :tag_type => 'section', :title => "Simple fruits", :parent_id => "fruit")
-      FactoryGirl.create(:tag, :tag_id => "fruit/aggregate", :tag_type => 'section', :title => "Aggregrate fruits", :parent_id => "fruit")
-      FactoryGirl.create(:tag, :tag_id => "vegetables", :tag_type => 'section', :title => "Vegetables")
-
-      @artefact = Artefact.create!(slug: "apple", name: "Apple", sections: [], kind: "guide", need_id: 1, owning_app: "x")
-    end
-
-    context "when related items are present in all groups" do
-      setup do
-        @artefact.sections = ["fruit/simple"]
-
-        @artefact.related_artefacts = [
-          Artefact.create!(slug: "pear", name: "Pear", kind: "guide", sections: ["fruit/simple"], need_id: 4, owning_app: "x"),
-          Artefact.create!(slug: "pineapple", name: "Pineapple", kind: "guide", sections: ["fruit/aggregate"], need_id: 2, owning_app: "x"),
-          Artefact.create!(slug: "broccoli", name: "Broccoli", kind: "guide", sections: ["vegetables"], need_id: 3, owning_app: "x")
-        ]
-        @artefact.save!
-        @artefact.reload
-      end
-
-      should "return a hash of artefacts in the same subsection" do
-        artefacts = @artefact.related_artefacts_grouped_by_distance
-        assert_equal ["pear"], artefacts['subsection'].map(&:slug)
-      end
-
-      should "return a hash of other artefacts in the same parent section" do
-        artefacts = @artefact.related_artefacts_grouped_by_distance
-        assert_equal ["pineapple"], artefacts['section'].map(&:slug)
-      end
-
-      should "return a hash of artefacts in other sections" do
-        artefacts = @artefact.related_artefacts_grouped_by_distance
-        assert_equal ["broccoli"], artefacts['other'].map(&:slug)
-      end
-
-      should "return related artefacts in order, with a scope" do
-        a = Artefact.create!(state: "live", slug: "a", name: "a", kind: "place", need_id: 1, owning_app: "x")
-        b = Artefact.create!(slug: "b", name: "b", kind: "place", need_id: 2, owning_app: "x")
-        c = Artefact.create!(state: "live", slug: "c", name: "c", kind: "place", need_id: 3, owning_app: "x")
-
-        @artefact.related_artefacts = [c,b,a]
-        @artefact.save!
-        @artefact.reload
-
-        assert_equal [c, a], @artefact.related_artefacts_grouped_by_distance(@artefact.related_artefacts.where(state: "live"))["other"]
-      end
-    end
-
-    should "return an empty array for a group with no related artefacts" do
-      # @artefact with no related items created in setup block
-
-      assert_equal [], @artefact.related_artefacts_grouped_by_distance["subsection"]
-      assert_equal [], @artefact.related_artefacts_grouped_by_distance["section"]
-      assert_equal [], @artefact.related_artefacts_grouped_by_distance["other"]
-    end
-
-    should "return all related artefacts in 'other' when an artefact has no sections" do
-      @artefact.related_artefacts = [
-        Artefact.create!(slug: "pear", name: "Pear", kind: "guide", sections: ["fruit/simple"], need_id: 4, owning_app: "x"),
-        Artefact.create!(slug: "banana", name: "Banana", kind: "guide", sections: ["fruit/simple"], need_id: 6, owning_app: "x")
-      ]
-
-      assert_equal [], @artefact.related_artefacts_grouped_by_distance["subsection"]
-      assert_equal [], @artefact.related_artefacts_grouped_by_distance["section"]
-      assert_equal ["pear", "banana"], @artefact.related_artefacts_grouped_by_distance["other"].map(&:slug)
-    end
-
-    should "return no section level related artefacts if the primary section has no parent_id" do
-      FactoryGirl.create(:tag, :tag_id => "fruit/multiple", :tag_type => 'section', :title => "Multiple fruits", :parent_id => nil)
-
-      @artefact.primary_section = "fruit/multiple"
-      @artefact.related_artefacts = [
-        Artefact.create!(slug: "fig", name: "Fig", kind: "guide", sections: ["fruit/multiple"], need_id: 4, owning_app: "x"),
-        Artefact.create!(slug: "strawberry", name: "Strawberry", kind: "guide", sections: ["fruit/simple"], need_id: 6, owning_app: "x")
-      ]
-      @artefact.save!
-
-      assert_equal ["fig"], @artefact.related_artefacts_grouped_by_distance["subsection"].map(&:slug)
-      assert_equal [], @artefact.related_artefacts_grouped_by_distance["section"]
-      assert_equal ["strawberry"], @artefact.related_artefacts_grouped_by_distance["other"].map(&:slug)
-    end
   end
 end

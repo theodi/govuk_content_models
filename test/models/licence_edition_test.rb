@@ -6,15 +6,16 @@ class LicenceEditionTest < ActiveSupport::TestCase
   end
 
   should "have correct extra fields" do
-    l = FactoryGirl.build(:licence_edition, panopticon_id: @artefact.id)
-    l.licence_identifier = "AB1234"
-    l.licence_short_description = "Short description of licence"
-    l.licence_overview = "Markdown overview of licence..."
-    l.will_continue_on = "The HMRC website"
-    l.continuation_link = "http://www.hmrc.gov.uk"
-    l.safely.save!
+    l = FactoryGirl.create(
+      :licence_edition,
+      panopticon_id: @artefact.id,
+      licence_identifier: "AB1234",
+      licence_short_description: "Short description of licence",
+      licence_overview: "Markdown overview of licence...",
+      will_continue_on: "The HMRC website",
+      continuation_link: "http://www.hmrc.gov.uk"
+    )
 
-    l = LicenceEdition.first
     assert_equal "AB1234", l.licence_identifier
     assert_equal "Short description of licence", l.licence_short_description
     assert_equal "Markdown overview of licence...", l.licence_overview
@@ -57,7 +58,7 @@ class LicenceEditionTest < ActiveSupport::TestCase
       assert_equal 'wibble', new_version.licence_identifier
       assert new_version.valid?, "Expected clone to be valid"
     end
-    
+
     should "not validate the continuation link when blank" do
       @l.continuation_link = ""
       assert @l.valid?, "continuation link validation should not be triggered when the field is blank"
@@ -92,13 +93,13 @@ class LicenceEditionTest < ActiveSupport::TestCase
 
   context "indexable_content" do
     should "include the licence_overview, removing markup" do
-      licence = FactoryGirl.create(:licence_edition, licence_overview: "## Overview")
-      assert_equal "Overview", licence.indexable_content
+      licence = FactoryGirl.create(:licence_edition)
+      assert_includes licence.indexable_content, "This is a licence overview"
     end
 
     should "include the licence_short_description" do
-      licence = FactoryGirl.create(:licence_edition, licence_short_description: "Short desc")
-      assert_equal "Short desc", licence.indexable_content
+      licence = FactoryGirl.create(:licence_edition)
+      assert_includes licence.indexable_content, "This is a licence short description."
     end
   end
 end

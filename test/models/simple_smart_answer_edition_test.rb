@@ -56,7 +56,7 @@ class SimpleSmartAnswerEditionTest < ActiveSupport::TestCase
 
     new_edition = edition.build_clone(AnswerEdition)
 
-    assert_equal edition.body, new_edition.body
+    assert_equal "This smart answer is somewhat unique and calls for a different kind of introduction\n\n\nquestion: You approach two open doors. Which do you choose? \n\n ", new_edition.body
 
     assert new_edition.is_a?(AnswerEdition)
     assert ! new_edition.respond_to?(:nodes)
@@ -98,6 +98,48 @@ class SimpleSmartAnswerEditionTest < ActiveSupport::TestCase
     edition.reload
 
     assert_equal 1, edition.nodes.size
+  end
+
+  context "SimpleSmartAnswerEdition: Start Button" do
+    setup do
+      @edition_attributes = {
+        panopticon_id: @artefact.id,
+        body: "This is a simple smart answer with a default text for start button."
+      }
+    end
+    context "with default text" do
+      setup do
+        edition = FactoryGirl.build(:simple_smart_answer_edition, @edition_attributes)
+        edition.save!
+      end
+
+      should "be created with the default text for start button" do
+        edition = SimpleSmartAnswerEdition.first
+
+        assert_equal "Start now", edition.start_button_text
+        assert_equal "This is a simple smart answer with a default text for start button.", edition.body
+        assert_equal @artefact.id.to_s, edition.panopticon_id
+      end
+    end
+
+    context "when button text changes" do
+      setup do
+        edition = FactoryGirl.build(
+          :simple_smart_answer_edition,
+          @edition_attributes.merge(start_button_text: "Click to start")
+        )
+        edition.save!
+      end
+
+      should "be created with the text given by the content creator" do
+        edition = SimpleSmartAnswerEdition.first
+
+        refute_equal "Start Now", edition.start_button_text
+        assert_equal "Click to start", edition.start_button_text
+        assert_equal "This is a simple smart answer with a default text for start button.", edition.body
+        assert_equal @artefact.id.to_s, edition.panopticon_id
+      end
+    end
   end
 
   context "update_attributes method" do

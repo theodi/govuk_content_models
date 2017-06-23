@@ -1,4 +1,11 @@
 require "test_helper"
+require "gds-sso/lint/user_test"
+
+class GDS::SSO::Lint::UserTest
+  def user_class
+    ::User
+  end
+end
 
 class UserTest < ActiveSupport::TestCase
   def setup
@@ -20,6 +27,17 @@ class UserTest < ActiveSupport::TestCase
     assert_equal "", user.to_s
   end
 
+  test "should return enabled users" do
+    disabled = FactoryGirl.create(:user, disabled: true)
+
+    FactoryGirl.create(:user).unset(:disabled)
+    FactoryGirl.create(:user, disabled: false)
+    FactoryGirl.create(:user, disabled: nil)
+
+    assert_equal 3, User.enabled.count
+    refute User.enabled.include? disabled
+  end
+
   test "should create new user with oauth params" do
     auth_hash = {
       "uid" => "1234abcd",
@@ -30,7 +48,8 @@ class UserTest < ActiveSupport::TestCase
       },
       "extra" => {
         "user" => {
-          "permissions" => ["signin"]
+          "permissions" => ["signin"],
+          "disabled" => false,
         }
       }
     }
@@ -39,12 +58,13 @@ class UserTest < ActiveSupport::TestCase
     assert_equal "user@example.com", user.email
     assert_equal "Luther Blisset", user.name
     assert_equal(["signin"], user.permissions)
+    refute user.disabled?
   end
 
   test "should find and update the user with oauth params" do
     attributes = {uid: "1234abcd", name: "Old", email: "old@m.com",
         permissions: ["everything"]}
-    User.create!(attributes, without_protection: true)
+    User.create!(attributes)
     auth_hash = {
       "uid" => "1234abcd",
       "info" => {
@@ -53,7 +73,8 @@ class UserTest < ActiveSupport::TestCase
       },
       "extra" => {
         "user" => {
-          "permissions" => []
+          "permissions" => [],
+          "disabled" => true
         }
       }
     }
@@ -62,6 +83,7 @@ class UserTest < ActiveSupport::TestCase
     assert_equal "new@m.com", user.email
     assert_equal "New", user.name
     assert_equal([], user.permissions)
+    assert user.disabled?
   end
 
   test "should create insecure gravatar URL" do
@@ -92,13 +114,13 @@ class UserTest < ActiveSupport::TestCase
     user = User.create(:name => "bob")
 
     trans = user.create_edition(:transaction, title: "test answer", slug: "test", panopticon_id: @artefact.id)
-    user.request_review(trans, {comment: "Hello"})
-    assert ! user.approve_review(trans, {comment: "Hello"})
+    request_review(user, trans)
+    refute approve_review(user, trans)
   end
 
   test "Edition becomes assigned to user when user is assigned an edition" do
-    boss_user = User.create(:name => "Mat")
-    worker_user = User.create(:name => "Grunt")
+    boss_user = FactoryGirl.create(:user, :name => "Mat")
+    worker_user = FactoryGirl.create(:user, :name => "Grunt")
 
     publication = boss_user.create_edition(:answer, title: "test answer", slug: "test", panopticon_id: @artefact.id)
     boss_user.assign(publication, worker_user)
@@ -108,7 +130,21 @@ class UserTest < ActiveSupport::TestCase
     assert_equal(worker_user, publication.assigned_to)
   end
 
-  test "should default to a collection called 'users'" do
-    assert_equal "users", User.collection_name
+  test "Edition can be unassigned" do
+    boss_user = FactoryGirl.create(:user, :name => "Mat")
+    worker_user = FactoryGirl.create(:user, :name => "Grunt")
+
+    publication = boss_user.create_edition(:answer, title: "test answer", slug: "test", panopticon_id: @artefact.id)
+    boss_user.assign(publication, worker_user)
+    publication.save
+    publication.reload
+
+    assert_equal(worker_user, publication.assigned_to)
+
+    boss_user.unassign(publication)
+    publication.save
+    publication.reload
+
+    assert_nil publication.assigned_to
   end
 end

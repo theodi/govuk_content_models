@@ -2,9 +2,6 @@
 require "edition"
 
 class BusinessSupportEdition < Edition
-
-  include Mongoid::MultiParameterAttributes
-
   field :short_description, type: String
   field :body, type: String
   field :min_value, type: Integer
@@ -17,7 +14,6 @@ class BusinessSupportEdition < Edition
   field :continuation_link, type: String
   field :will_continue_on, type: String
   field :contact_details, type: String
-  field :business_support_identifier, type: String
 
   field :priority,        type: Integer, default: 1
   field :business_types,  type: Array, default: []
@@ -29,26 +25,24 @@ class BusinessSupportEdition < Edition
   field :support_types,   type: Array, default: []
   field :start_date,      type: Date
   field :end_date,        type: Date
+  field :area_gss_codes,  type: Array, default: []
 
-  index :business_support_identifier
+  GOVSPEAK_FIELDS = [:body, :eligibility, :evaluation, :additional_information]
 
-  GOVSPEAK_FIELDS = Edition::GOVSPEAK_FIELDS + [:body, :eligibility, :evaluation, :additional_information]
-
+  validate :scheme_dates
   validate :min_must_be_less_than_max
-  validates :business_support_identifier, :presence => true
-  validate :business_support_identifier_unique
   validates_format_of :continuation_link, :with => URI::regexp(%w(http https)), :allow_blank => true
 
   # https://github.com/mongoid/mongoid/issues/1735 Really Mongoid‽
   validates :min_value, :max_value, :max_employees, :numericality => {:allow_nil => true, :only_integer => true}
 
-  @fields_to_clone = [:body, :min_value, :max_value, :max_employees, :organiser,
-      :eligibility, :evaluation, :additional_information, :continuation_link,
-      :will_continue_on, :contact_details, :short_description,
-      :business_support_identifier]
+  scope :for_facets, lambda { |facets|
+    where("$and" => facets_criteria(facets)).order_by(priority: :desc, title: :asc)
+  }
+
 
   def whole_body
-    [short_description, body].join("\n\n")
+    [short_description, body, additional_information].join("\n\n")
   end
 
   private
@@ -60,10 +54,21 @@ class BusinessSupportEdition < Edition
     end
   end
 
-  def business_support_identifier_unique
-    if self.class.without_state('archived').where(:business_support_identifier => business_support_identifier,
-                        :panopticon_id.ne => panopticon_id).any?
-      errors.add(:business_support_identifier, :taken)
+  def self.facets_criteria(facets)
+    criteria = []
+    facets.each do |facet_name, values|
+      slugs = values.split(",")
+      criteria << { facet_name => { "$in" => slugs } } unless slugs.empty?
+    end
+    criteria
+  end
+
+  def scheme_dates
+    errors.add(:start_date, "year must be 4 digits") if start_date.present? && start_date.year.to_s.length != 4
+    errors.add(:end_date, "year must be 4 digits") if end_date.present? && end_date.year.to_s.length != 4
+
+    if start_date.present? && end_date.present? && start_date > end_date
+      errors.add(:start_date, "can't be later than end date")
     end
   end
 end

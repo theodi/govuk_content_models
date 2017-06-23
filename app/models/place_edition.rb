@@ -1,17 +1,12 @@
 require "edition"
-require "expectant"
 
 class PlaceEdition < Edition
-  include Expectant
+  field :introduction, type: String
+  field :more_information, type: String
+  field :need_to_know, type: String
+  field :place_type, type: String
 
-  field :introduction,      type: String
-  field :more_information,  type: String
-  field :place_type,        type: String
-
-  GOVSPEAK_FIELDS = Edition::GOVSPEAK_FIELDS + [:introduction, :more_information]
-
-  @fields_to_clone = [:introduction, :more_information, :place_type,
-                      :expectation_ids]
+  GOVSPEAK_FIELDS = [:introduction, :more_information, :need_to_know]
 
   def whole_body
     self.introduction

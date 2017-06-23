@@ -8,14 +8,11 @@ class LicenceEdition < Edition
   field :will_continue_on, :type => String
   field :continuation_link, :type => String
 
-  GOVSPEAK_FIELDS = Edition::GOVSPEAK_FIELDS + [:licence_overview]
+  GOVSPEAK_FIELDS = [:licence_overview]
 
   validates :licence_identifier, :presence => true
   validate :licence_identifier_unique
   validates_format_of :continuation_link, :with => URI::regexp(%w(http https)), :allow_blank => true
-  
-  @fields_to_clone = [:licence_identifier, :licence_short_description,
-                      :licence_overview, :will_continue_on, :continuation_link]
 
   def whole_body
     [licence_short_description, licence_overview].join("\n\n")
@@ -27,8 +24,11 @@ class LicenceEdition < Edition
 
   private
   def licence_identifier_unique
-    if self.class.without_state('archived').where(:licence_identifier => licence_identifier,
-                        :panopticon_id.ne => panopticon_id).any?
+    if self.class.where(
+      :state.ne => 'archived',
+      :licence_identifier => licence_identifier,
+      :panopticon_id.ne => panopticon_id
+    ).any?
       errors.add(:licence_identifier, :taken)
     end
   end

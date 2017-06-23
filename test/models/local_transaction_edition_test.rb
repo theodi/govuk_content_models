@@ -3,35 +3,17 @@ require "govuk_content_models/test_helpers/local_services"
 
 class LocalTransactionEditionTest < ActiveSupport::TestCase
   include LocalServicesHelper
+  BINS = 1
+  HOUSING_BENEFIT = 2
+  NONEXISTENT = 999
+
   def setup
     @artefact = FactoryGirl.create(:artefact)
   end
 
-  test "should report that an authority provides a service" do
-    bins_transaction = LocalTransactionEdition.new(
-      lgsl_code:     "bins",
-      title:         "Transaction",
-      slug:          "slug",
-      panopticon_id: @artefact.id
-    )
-    county_council = make_authority_providing("bins")
-    assert bins_transaction.service_provided_by?(county_council.snac)
-  end
-
-  test "should report that an authority does not provide a service" do
-    bins_transaction = LocalTransactionEdition.new(
-      lgsl_code:     "bins",
-      title:         "Transaction",
-      slug:          "slug",
-      panopticon_id: @artefact.id
-    )
-    county_council = make_authority_providing("housing-benefit")
-    refute bins_transaction.service_provided_by?(county_council.snac)
-  end
-
   test "should be a transaction search format" do
     bins_transaction = LocalTransactionEdition.new(
-      lgsl_code:     "bins",
+      lgsl_code:     BINS,
       title:         "Transaction",
       slug:          "slug",
       panopticon_id: @artefact.id
@@ -41,38 +23,15 @@ class LocalTransactionEditionTest < ActiveSupport::TestCase
 
 
   test "should validate on save that a LocalService exists for that lgsl_code" do
-    s = LocalService.create!(lgsl_code: "bins", providing_tier: %w{county unitary})
+    service = LocalService.create!(lgsl_code: BINS, providing_tier: %w{county unitary})
 
-    lt = LocalTransactionEdition.new(lgsl_code: "nonexistent", title: "Foo", slug: "foo", panopticon_id: @artefact.id)
-    lt.save
-    assert !lt.valid?
+    local_transaction = LocalTransactionEdition.new(lgsl_code: NONEXISTENT, lgil_code: 1, title: "Foo", slug: "foo", panopticon_id: @artefact.id)
+    local_transaction.save
+    assert !local_transaction.valid?
 
-    lt = LocalTransactionEdition.new(lgsl_code: s.lgsl_code, title: "Bar", slug: "bar", panopticon_id: @artefact.id)
-    lt.save
-    assert lt.valid?
-    assert lt.persisted?
-  end
-
-  test "should create a diff between the versions when publishing a new version" do
-    make_service(149, %w{county unitary})
-    edition_one = LocalTransactionEdition.new(title: "Transaction", slug: "transaction", lgsl_code: "149", panopticon_id: @artefact.id)
-    user = User.create name: "Thomas"
-
-    edition_one.introduction = "Test"
-    edition_one.state = :ready
-    edition_one.save!
-
-    user.publish edition_one, comment: "First edition"
-
-    edition_two = edition_one.build_clone
-    edition_two.introduction = "Testing"
-    edition_two.state = :ready
-    edition_two.save!
-
-    user.publish edition_two, comment: "Second edition"
-
-    publish_action = edition_two.actions.where(request_type: "publish").last
-
-    assert_equal "{\"Test\" >> \"Testing\"}", publish_action.diff
+    local_transaction = LocalTransactionEdition.new(lgsl_code: service.lgsl_code, lgil_code: 1, title: "Bar", slug: "bar", panopticon_id: @artefact.id)
+    local_transaction.save
+    assert local_transaction.valid?
+    assert local_transaction.persisted?
   end
 end
